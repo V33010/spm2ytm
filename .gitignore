@@ -1,0 +1,75 @@
+
+# ----------------------------------
+# Python
+# ----------------------------------
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+develop-eggs/
+.eggs/
+.installed.cfg
+pip-wheel-metadata/
+*.manifest
+*.spec
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+*.env
+*.venv
+
+# Jupyter Notebooks
+.ipynb_checkpoints/
+
+# UV / Poetry / Pipenv
+.uv/
+.poetry/
+.pdm-python
+pdm.lock
+
+# ----------------------------------
+# Environment & Secrets
+# ----------------------------------
+.env
+.env.*
+!.env.example
+
+# ----------------------------------
+# Logs
+# ----------------------------------
+*.log
+logs/
+data/logs/*
+
+# ----------------------------------
+# OS / Editor files
+# ----------------------------------
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# ----------------------------------
+# Cache
+# ----------------------------------
+.cache/
+.mypy_cache/
+pytest_cache/
+coverage.xml
+htmlcov/
+
+# ----------------------------------
+# Project-specific
+# ----------------------------------
+data/playlists/*.txt
+!data/playlists/example.txt
