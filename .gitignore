@@ -75,6 +75,7 @@ data/playlists/*.txt
 !data/playlists/example.txt
 data/liked_songs
 browser.json
+oauth.json
 
 
 
