@@ -1,51 +1,139 @@
-import os
-from typing import List
+import time
 
-from spm2ytm.clients.yt_client import YouTubeClient
+from googleapiclient.errors import HttpError
+
+# -------------------------
+# YouTube Playlist Helpers
+# -------------------------
 
 
-def load_songs_from_text(file_path: str) -> List[str]:
+def create_playlist(yt, title, description=""):
     """
-    Reads a text file and returns a list of songs (one per line).
+    Creates a private YouTube playlist and returns its ID.
     """
-    if not os.path.exists(file_path):
-        raise FileNotFoundError(f"Text file not found: {file_path}")
+    try:
+        req = yt.playlists().insert(
+            part="snippet,status",
+            body={
+                "snippet": {"title": title, "description": description},
+                "status": {"privacyStatus": "private"},
+            },
+        )
+        res = req.execute()
+        print(f"Created YouTube playlist '{title}' (ID: {res['id']})")
+        return res["id"]
+    except HttpError as e:
+        print(f"Error creating playlist '{title}': {e}")
+        return None
 
-    with open(file_path, "r", encoding="utf-8") as f:
-        songs = [line.strip() for line in f.readlines() if line.strip()]
 
-    return songs
-
-
-def create_yt_playlist_from_text(file_path: str, playlist_name: str) -> str:
+def search_video(yt, query, retries=3, delay=2):
     """
-    Creates a YouTube playlist using the normal YouTube Data API (NOT YouTube Music API)
-    and fills it with songs from a .txt file.
+    Searches YouTube and returns the first video's ID.
     """
+    for attempt in range(1, retries + 1):
+        try:
+            req = yt.search().list(
+                part="id,snippet",
+                q=query,
+                maxResults=1,
+                type="video",
+            )
+            res = req.execute()
+            items = res.get("items", [])
+            if not items:
+                return None
+            return items[0]["id"]["videoId"]
+        except HttpError as e:
+            if e.resp.status in [500, 503, 409] and attempt < retries:
+                print(
+                    f"Warning: Temporary error searching '{query}' (attempt {attempt}). Retrying..."
+                )
+                time.sleep(delay)
+                delay *= 2
+                continue
+            elif e.resp.status == 403 and "quotaExceeded" in str(e):
+                print(
+                    "Quota exceeded while searching videos. Stopping further searches."
+                )
+                return None
+            else:
+                print(f"Error searching video '{query}': {e}")
+                return None
+    return None
 
-    print(f"📄 Loading songs from: {file_path}")
-    songs = load_songs_from_text(file_path)
 
-    yt = YouTubeClient()
+def add_video_to_playlist(yt, playlist_id, video_id, retries=3, delay=2):
+    """
+    Inserts a video into a playlist, with retry for transient errors.
+    """
+    for attempt in range(1, retries + 1):
+        try:
+            req = yt.playlistItems().insert(
+                part="snippet",
+                body={
+                    "snippet": {
+                        "playlistId": playlist_id,
+                        "resourceId": {"kind": "youtube#video", "videoId": video_id},
+                    }
+                },
+            )
+            return req.execute()
+        except HttpError as e:
+            if e.resp.status in [500, 503, 409] and attempt < retries:
+                print(
+                    f"Warning: Temporary error adding video (attempt {attempt}). Retrying..."
+                )
+                time.sleep(delay)
+                delay *= 2
+                continue
+            elif e.resp.status == 403 and "quotaExceeded" in str(e):
+                print("Quota exceeded while adding videos. Stopping further additions.")
+                return None
+            else:
+                print(f"Error adding video {video_id}: {e}")
+                return None
+    return None
 
-    print(f"🎵 Creating YouTube playlist: {playlist_name}")
-    playlist_id = yt.create_playlist(
-        playlist_name, description="Imported using spm2ytm"
-    )
 
-    print(f"🔍 Searching & adding songs...")
-    for song in songs:
-        print(f" → Searching: {song}")
-        video_id = yt.search_song(song)
+def create_playlist_and_add_tracks(yt, playlist_name, track_queries, delay_between=0.5):
+    """
+    High-level helper:
+    - Creates playlist
+    - Searches & adds tracks
+    - Returns playlist ID
 
-        if not video_id:
-            print(f"   ❌ No result found for: {song}")
+    Shows progress while adding tracks and stops gracefully if quota exceeded.
+    """
+    playlist_id = create_playlist(yt, playlist_name)
+    if not playlist_id:
+        print("Playlist creation failed. Aborting.")
+        return None
+
+    total = len(track_queries)
+    added = 0
+
+    print(f"Adding {total} tracks to playlist '{playlist_name}'...")
+
+    for idx, track in enumerate(track_queries, start=1):
+        video_id = search_video(yt, track)
+        if video_id is None:
+            print(f"[{idx}/{total}] Track not found or quota exceeded: {track}")
+            if "quotaExceeded" in str(video_id):
+                break
             continue
 
-        yt.add_song_to_playlist(playlist_id, video_id)
-        print(f"   ✅ Added: {song}")
+        result = add_video_to_playlist(yt, playlist_id, video_id)
+        if result:
+            added += 1
+            print(f"[{idx}/{total}] Added: {track}")
+        else:
+            print(f"[{idx}/{total}] Failed to add: {track}")
+            # Stop if quota exceeded during addition
+            if result is None and "Quota exceeded" in str(result):
+                break
 
-    print(f"\n🎉 Playlist created successfully!")
-    print(f"Playlist URL: https://www.youtube.com/playlist?list={playlist_id}")
+        time.sleep(delay_between)  # avoid hitting rate limits
 
+    print(f"Done! {added}/{total} tracks added to YouTube playlist '{playlist_name}'.")
     return playlist_id

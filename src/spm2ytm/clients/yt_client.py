@@ -1,71 +1,32 @@
-import os
+from pathlib import Path
 
 from google.oauth2.credentials import Credentials
+from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
+SCOPES = ["https://www.googleapis.com/auth/youtube"]
 
-class YouTubeClient:
-    """
-    Wrapper for YouTube Data API v3
-    Handles:
-    - Creating playlists
-    - Searching songs
-    - Adding videos to playlists
-    """
+ROOT_DIR = Path(__file__).resolve().parents[2]
+OAUTH_JSON = ROOT_DIR / "oauth.json"
+CLIENT_SECRET = ROOT_DIR / "client_secret.json"
 
-    def __init__(self):
-        creds_path = os.path.join(os.getcwd(), "oauth.json")
 
-        if not os.path.exists(creds_path):
-            raise FileNotFoundError(
-                f"oauth.json not found in current working directory: {creds_path}"
-            )
+def get_youtube_client():
+    creds = None
 
-        self.creds = Credentials.from_authorized_user_file(
-            creds_path,
-            scopes=[
-                "https://www.googleapis.com/auth/youtube",
-                "https://www.googleapis.com/auth/youtube.force-ssl",
-            ],
-        )
+    if OAUTH_JSON.exists():
+        try:
+            creds = Credentials.from_authorized_user_file(str(OAUTH_JSON), SCOPES)
+        except Exception:
+            creds = None
 
-        self.youtube = build("youtube", "v3", credentials=self.creds)
+    if not creds or not creds.valid:
+        flow = InstalledAppFlow.from_client_secrets_file(str(CLIENT_SECRET), SCOPES)
 
-    def create_playlist(self, title: str, description: str = "") -> str:
-        request = self.youtube.playlists().insert(
-            part="snippet,status",
-            body={
-                "snippet": {"title": title, "description": description},
-                "status": {"privacyStatus": "private"},
-            },
-        )
-        response = request.execute()
-        return response["id"]
+        # Use run_local_server instead of run_console
+        creds = flow.run_local_server(port=0)
 
-    def search_song(self, query: str) -> str | None:
-        request = self.youtube.search().list(
-            part="snippet",
-            q=query,
-            type="video",
-            maxResults=1,
-            videoCategoryId="10",  # Music category
-        )
-        response = request.execute()
+        with open(OAUTH_JSON, "w") as f:
+            f.write(creds.to_json())
 
-        items = response.get("items", [])
-        if not items:
-            return None
-
-        return items[0]["id"]["videoId"]
-
-    def add_song_to_playlist(self, playlist_id: str, video_id: str):
-        request = self.youtube.playlistItems().insert(
-            part="snippet",
-            body={
-                "snippet": {
-                    "playlistId": playlist_id,
-                    "resourceId": {"kind": "youtube#video", "videoId": video_id},
-                }
-            },
-        )
-        request.execute()
+    return build("youtube", "v3", credentials=creds)
