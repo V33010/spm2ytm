@@ -1,139 +1,90 @@
+import json
 import time
+from pathlib import Path
 
-from googleapiclient.errors import HttpError
-
-# -------------------------
-# YouTube Playlist Helpers
-# -------------------------
+from playwright.sync_api import sync_playwright
 
 
-def create_playlist(yt, title, description=""):
-    """
-    Creates a private YouTube playlist and returns its ID.
-    """
-    try:
-        req = yt.playlists().insert(
-            part="snippet,status",
-            body={
-                "snippet": {"title": title, "description": description},
-                "status": {"privacyStatus": "private"},
-            },
-        )
-        res = req.execute()
-        print(f"Created YouTube playlist '{title}' (ID: {res['id']})")
-        return res["id"]
-    except HttpError as e:
-        print(f"Error creating playlist '{title}': {e}")
-        return None
+def load_cookies(context, cookies_file_path: str):
+    """Load cookies.json into Playwright browser context."""
+    with open(cookies_file_path, "r", encoding="utf-8") as f:
+        cookies = json.load(f)
+    context.add_cookies(cookies)
 
 
-def search_video(yt, query, retries=3, delay=2):
-    """
-    Searches YouTube and returns the first video's ID.
-    """
-    for attempt in range(1, retries + 1):
-        try:
-            req = yt.search().list(
-                part="id,snippet",
-                q=query,
-                maxResults=1,
-                type="video",
-            )
-            res = req.execute()
-            items = res.get("items", [])
-            if not items:
-                return None
-            return items[0]["id"]["videoId"]
-        except HttpError as e:
-            if e.resp.status in [500, 503, 409] and attempt < retries:
-                print(
-                    f"Warning: Temporary error searching '{query}' (attempt {attempt}). Retrying..."
-                )
-                time.sleep(delay)
-                delay *= 2
-                continue
-            elif e.resp.status == 403 and "quotaExceeded" in str(e):
-                print(
-                    "Quota exceeded while searching videos. Stopping further searches."
-                )
-                return None
-            else:
-                print(f"Error searching video '{query}': {e}")
-                return None
-    return None
+def create_youtube_playlist(playlist_name: str, cookies_path: str):
+    """Create a new playlist on YouTube and return its playlist ID."""
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context()
+
+        load_cookies(context, cookies_path)
+
+        page = context.new_page()
+        page.goto("https://www.youtube.com")
+
+        # Open create menu
+        page.click("button[aria-label='Create']")
+
+        # Click "Create playlist"
+        page.click("yt-formatted-string:has-text('Create playlist')")
+
+        # Enter playlist name
+        page.fill("input#input-1", playlist_name)
+
+        # Confirm creation
+        page.click("button:has-text('Create')")
+
+        time.sleep(2)
+
+        # After creating, we get redirected → grab playlist ID from URL
+        url = page.url
+        # e.g., https://www.youtube.com/playlist?list=PLxZ...
+        playlist_id = url.split("list=")[-1]
+
+        browser.close()
+        return playlist_id
 
 
-def add_video_to_playlist(yt, playlist_id, video_id, retries=3, delay=2):
-    """
-    Inserts a video into a playlist, with retry for transient errors.
-    """
-    for attempt in range(1, retries + 1):
-        try:
-            req = yt.playlistItems().insert(
-                part="snippet",
-                body={
-                    "snippet": {
-                        "playlistId": playlist_id,
-                        "resourceId": {"kind": "youtube#video", "videoId": video_id},
-                    }
-                },
-            )
-            return req.execute()
-        except HttpError as e:
-            if e.resp.status in [500, 503, 409] and attempt < retries:
-                print(
-                    f"Warning: Temporary error adding video (attempt {attempt}). Retrying..."
-                )
-                time.sleep(delay)
-                delay *= 2
-                continue
-            elif e.resp.status == 403 and "quotaExceeded" in str(e):
-                print("Quota exceeded while adding videos. Stopping further additions.")
-                return None
-            else:
-                print(f"Error adding video {video_id}: {e}")
-                return None
-    return None
+def add_video_to_playlist(video_id: str, playlist_id: str, cookies_path: str):
+    """Add a single video to a playlist using the video page menu."""
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context()
+        load_cookies(context, cookies_path)
+        page = context.new_page()
+
+        page.goto(f"https://www.youtube.com/watch?v={video_id}")
+        page.wait_for_selector("button[aria-label='Save to playlist']")
+
+        # Click save button
+        page.click("button[aria-label='Save to playlist']")
+
+        # Select the playlist checkmark box
+        page.click(f"tp-yt-paper-checkbox[playlist-id='{playlist_id}']")
+
+        # Close the menu
+        page.keyboard.press("Escape")
+
+        browser.close()
 
 
-def create_playlist_and_add_tracks(yt, playlist_name, track_queries, delay_between=0.5):
-    """
-    High-level helper:
-    - Creates playlist
-    - Searches & adds tracks
-    - Returns playlist ID
+def process_id_file(video_id_file: str, cookies_path: str, playlist_name: str):
+    """Main function that creates a playlist and adds all videos to it."""
+    video_ids = []
+    with open(video_id_file, "r", encoding="utf-8") as f:
+        for line in f:
+            clean = line.strip()
+            if clean:
+                video_ids.append(clean)
 
-    Shows progress while adding tracks and stops gracefully if quota exceeded.
-    """
-    playlist_id = create_playlist(yt, playlist_name)
-    if not playlist_id:
-        print("Playlist creation failed. Aborting.")
-        return None
+    print(f"[+] Creating YouTube playlist: {playlist_name}")
+    playlist_id = create_youtube_playlist(playlist_name, cookies_path)
+    print(f"[+] Playlist created with ID: {playlist_id}")
 
-    total = len(track_queries)
-    added = 0
+    print(f"[+] Adding {len(video_ids)} videos...")
+    for vid in video_ids:
+        print(f"  → Adding {vid}")
+        add_video_to_playlist(vid, playlist_id, cookies_path)
 
-    print(f"Adding {total} tracks to playlist '{playlist_name}'...")
-
-    for idx, track in enumerate(track_queries, start=1):
-        video_id = search_video(yt, track)
-        if video_id is None:
-            print(f"[{idx}/{total}] Track not found or quota exceeded: {track}")
-            if "quotaExceeded" in str(video_id):
-                break
-            continue
-
-        result = add_video_to_playlist(yt, playlist_id, video_id)
-        if result:
-            added += 1
-            print(f"[{idx}/{total}] Added: {track}")
-        else:
-            print(f"[{idx}/{total}] Failed to add: {track}")
-            # Stop if quota exceeded during addition
-            if result is None and "Quota exceeded" in str(result):
-                break
-
-        time.sleep(delay_between)  # avoid hitting rate limits
-
-    print(f"Done! {added}/{total} tracks added to YouTube playlist '{playlist_name}'.")
-    return playlist_id
+    print("[+] Done! Playlist created and all videos added.")

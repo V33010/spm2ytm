@@ -1,32 +1,58 @@
-from pathlib import Path
+import re
 
-from google.oauth2.credentials import Credentials
-from google_auth_oauthlib.flow import InstalledAppFlow
-from googleapiclient.discovery import build
-
-SCOPES = ["https://www.googleapis.com/auth/youtube"]
-
-ROOT_DIR = Path(__file__).resolve().parents[2]
-OAUTH_JSON = ROOT_DIR / "oauth.json"
-CLIENT_SECRET = ROOT_DIR / "client_secret.json"
+from yt_dlp import YoutubeDL
 
 
-def get_youtube_client():
-    creds = None
+def search_video_ytdlp(query: str) -> str | None:
+    """
+    Searches YouTube using yt-dlp and returns the first video's ID.
 
-    if OAUTH_JSON.exists():
-        try:
-            creds = Credentials.from_authorized_user_file(str(OAUTH_JSON), SCOPES)
-        except Exception:
-            creds = None
+    Rules:
+    - Query may contain: letters, numbers, spaces, underscores.
+    - Uses yt-dlp's 'ytsearch1:' to fetch only the top result.
 
-    if not creds or not creds.valid:
-        flow = InstalledAppFlow.from_client_secrets_file(str(CLIENT_SECRET), SCOPES)
+    Returns:
+        video_id (str) if found, otherwise None.
+    """
 
-        # Use run_local_server instead of run_console
-        creds = flow.run_local_server(port=0)
+    # ------------------------
+    # Validate query
+    # ------------------------
+    if not re.fullmatch(r"[A-Za-z0-9_ ]+", query):
+        raise ValueError(
+            "Query may only contain letters, numbers, spaces, and underscores."
+        )
 
-        with open(OAUTH_JSON, "w") as f:
-            f.write(creds.to_json())
+    # ------------------------
+    # yt-dlp search
+    # ------------------------
+    ydl_opts = {
+        "quiet": True,
+        "skip_download": True,
+        "extract_flat": True,  # faster, metadata only
+    }
 
-    return build("youtube", "v3", credentials=creds)
+    search_term = f"ytsearch1:{query}"
+
+    with YoutubeDL(ydl_opts) as ydl:
+        info = ydl.extract_info(search_term, download=False)
+
+    # ------------------------
+    # Process response
+    # ------------------------
+    entries = info.get("entries", [])
+    if not entries:
+        return None
+
+    first = entries[0]
+
+    # id is guaranteed in extract_flat mode
+    video_id = first.get("id")
+    return video_id
+
+
+if __name__ == "__main__":
+
+    video_id = search_video_ytdlp("Drake Views")
+
+    print(video_id)

@@ -77,6 +77,8 @@ data/liked_songs
 browser.json
 oauth.json
 client_secret.json
+cookies.json
+cookies.txt
 
 
 
