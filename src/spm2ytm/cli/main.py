@@ -5,6 +5,7 @@ import click
 from dotenv import load_dotenv
 
 from spm2ytm.clients.spotify_client import SpotifyClient
+from spm2ytm.core.create import create_youtube_playlist_from_spotify
 from spm2ytm.core.extract import (extract_liked_songs_to_text,
                                   extract_playlist_to_text)
 
@@ -19,16 +20,37 @@ def cli():
 
 @cli.command()
 @click.argument("playlist_url")
-@click.argument("output_path", required=False)
+@click.argument("action", required=False)
+@click.argument("youtube_playlist_name", required=False)
+@click.option(
+    "--output-path", required=False, help="Custom output directory for playlist file"
+)
 @click.option("--client-id", envvar="SPOTIFY_CLIENT_ID", required=True)
 @click.option("--client-secret", envvar="SPOTIFY_CLIENT_SECRET", required=True)
 @click.option("--redirect-uri", envvar="SPOTIFY_REDIRECT_URI", required=True)
-def playlist(playlist_url, output_path, client_id, client_secret, redirect_uri):
-    """Extract any Spotify playlist to a text file."""
+@click.option(
+    "--cookies-path", default="cookies.json", help="Path to YouTube cookies.json file"
+)
+def playlist(
+    playlist_url,
+    action,
+    youtube_playlist_name,
+    output_path,
+    client_id,
+    client_secret,
+    redirect_uri,
+    cookies_path,
+):
+    """Extract Spotify playlist to text file, optionally create YouTube playlist.
+
+    Usage:
+        playlist <spotify_url>                          - Extract only
+        playlist <spotify_url> ytp <youtube_playlist>   - Extract + Create YouTube playlist
+    """
 
     # Default output folder
     if not output_path:
-        output_path = os.path.join("..", "data", "playlists")
+        output_path = os.path.join("data", "playlists")
     os.makedirs(output_path, exist_ok=True)
 
     client = SpotifyClient(client_id, client_secret, redirect_uri)
@@ -52,7 +74,32 @@ def playlist(playlist_url, output_path, client_id, client_secret, redirect_uri):
 
     # Extract playlist to text
     extract_playlist_to_text(client, playlist_url, file_path)
-    click.echo(f"Playlist saved to {file_path}")
+    click.echo(f"✓ Playlist saved to {file_path}")
+
+    # Check if user wants to create YouTube playlist
+    if action == "ytp":
+        if not youtube_playlist_name:
+            click.echo("Error: YouTube playlist name required after 'ytp'", err=True)
+            return
+
+        click.echo(f"\n▶ Starting YouTube playlist creation...")
+        click.echo(f"  Target YouTube playlist: {youtube_playlist_name}")
+
+        try:
+            create_youtube_playlist_from_spotify(
+                song_file_path=file_path,
+                playlist_name=youtube_playlist_name,
+                cookies_path=cookies_path,
+            )
+            click.echo(f"\n✓ Successfully created YouTube playlist!")
+        except Exception as e:
+            click.echo(f"\n✗ Error creating YouTube playlist: {e}", err=True)
+
+    elif action is not None:
+        click.echo(
+            f"Warning: Unknown action '{action}'. Use 'ytp' to create YouTube playlist.",
+            err=True,
+        )
 
 
 @cli.command()
@@ -65,7 +112,7 @@ def liked(output_path, client_id, client_secret, redirect_uri):
 
     # Default output folder
     if not output_path:
-        output_path = os.path.join("..", "data", "liked_songs")
+        output_path = os.path.join("data", "liked_songs")
     os.makedirs(output_path, exist_ok=True)
 
     # Build filename for liked songs

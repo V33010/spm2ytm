@@ -21,21 +21,22 @@ def youtube_search_video_id(query: str) -> str:
 def load_cookies(context, cookies_path: Path):
     if not cookies_path.exists():
         raise FileNotFoundError(f"Missing cookies.json at: {cookies_path}")
-
     raw = json.loads(cookies_path.read_text())
-
     fixed = []
     for c in raw:
-        # Fix SameSite value
         if c.get("sameSite") not in ("Strict", "Lax", "None"):
             c["sameSite"] = "None"
-
-        # Playwright requires expiry as int
-        if "expiry" in c and isinstance(c["expiry"], float):
-            c["expiry"] = int(c["expiry"])
-
+        if "expires" in c:
+            if c["expires"] is None:
+                del c["expires"]
+            elif isinstance(c["expires"], float):
+                c["expires"] = int(c["expires"])
+        if "expiry" in c:
+            if c["expiry"] is None:
+                del c["expiry"]
+            elif isinstance(c["expiry"], float):
+                c["expiry"] = int(c["expiry"])
         fixed.append(c)
-
     context.add_cookies(fixed)
     print("[TEST] Cookies loaded successfully.")
 
@@ -47,44 +48,76 @@ def test_playwright_youtube_playlist_creation():
     assert isinstance(video_id, str) and len(video_id) > 5
     print("[TEST] Found video ID:", video_id)
 
+    # Target playlist name
+    playlist_name = "new sound old"
+
     # STEP 2 — Playwright automation
     with sync_playwright() as p:
-
-        # ✔ WORKS IN WSL
-        # Headless=False is required so Google does not instantly block everything.
         browser = p.chromium.launch(headless=False)
-
         context = browser.new_context()
 
-        # Load cookies exported from real Chrome (Windows side)
         load_cookies(context, COOKIES_PATH)
 
         page = context.new_page()
-        page.goto("https://www.youtube.com")
 
+        page.goto("https://www.youtube.com")
+        page.wait_for_load_state("networkidle")
+        time.sleep(2)
+
+        if page.locator("button:has-text('Sign in')").is_visible():
+            print("[TEST] WARNING: Not logged in! Cookies may be invalid.")
+            page.screenshot(path="debug_not_logged_in.png")
+            context.close()
+            browser.close()
+            return
+
+        print("[TEST] Logged in successfully")
         print("[TEST] Current URL:", page.url)
 
         # STEP 3 — Open video
         page.goto(f"https://www.youtube.com/watch?v={video_id}")
-        page.wait_for_load_state()
-        time.sleep(2)
+        page.wait_for_load_state("networkidle")
+        time.sleep(3)
 
-        # STEP 4 — Try opening playlist save dialog
+        # STEP 4 — Add to playlist
         try:
-            page.click("button[aria-label='Save to playlist']")
+            # Click the 3-dot menu button
+            three_dot_menu = page.locator(
+                "button.yt-spec-button-shape-next[aria-label='More actions']"
+            ).first
+            three_dot_menu.wait_for(state="visible", timeout=10000)
+            three_dot_menu.click()
+            print("[TEST] Clicked 3-dot menu")
             time.sleep(1)
 
-            page.click("text=Create new playlist")
+            # Click "Save" from the dropdown menu
+            save_option = page.locator(
+                "ytd-menu-service-item-renderer:has-text('Save')"
+            ).first
+            save_option.wait_for(state="visible", timeout=5000)
+            save_option.click()
+            print("[TEST] Clicked Save option")
+            time.sleep(2)
+
+            # Click on the playlist using aria-label which contains the playlist name
+            # Format is: "playlist_name, Private, Not selected" or "playlist_name, Private, Selected"
+            playlist_item = page.locator(
+                f"yt-list-item-view-model[aria-label^='{playlist_name},']"
+            ).first
+            playlist_item.wait_for(state="visible", timeout=5000)
+            playlist_item.click()
+            print(f"[TEST] Added to playlist: {playlist_name}")
             time.sleep(1)
 
-            page.fill('input[aria-label="Name"]', "playwright-test")
-            time.sleep(1)
-
-            page.click("text=Create")
-            print("[TEST] Playlist created!")
+            # Close the dialog
+            page.keyboard.press("Escape")
+            print("[TEST] Done!")
 
         except Exception as e:
-            print("[TEST] Could not create playlist:", e)
+            print("[TEST] Could not add to playlist:", e)
+            page.screenshot(path="debug_screenshot.png")
+            print("[TEST] Screenshot saved to debug_screenshot.png")
 
+        time.sleep(2)
         context.close()
         browser.close()
