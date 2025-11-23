@@ -103,6 +103,44 @@ def playlist(
 
 
 @cli.command()
+@click.argument("youtube_playlist_name")
+@click.option(
+    "--song-file",
+    required=True,
+    type=click.Path(exists=True),
+    help="Path to text file containing song names (one per line)",
+)
+@click.option(
+    "--cookies-path", default="cookies.json", help="Path to YouTube cookies.json file"
+)
+def ytp(youtube_playlist_name, song_file, cookies_path):
+    """Create YouTube playlist from a custom song file (bypasses Spotify extraction).
+
+    Usage:
+        ytp <youtube_playlist_name> --song-file <path> --cookies-path <path>
+    """
+    click.echo(f"▶ Creating YouTube playlist from custom song file")
+    click.echo(f"  Song file: {song_file}")
+    click.echo(f"  Target YouTube playlist: {youtube_playlist_name}")
+    click.echo(f"  Cookies: {cookies_path}")
+
+    # Verify song file exists
+    if not os.path.exists(song_file):
+        click.echo(f"✗ Error: Song file not found at {song_file}", err=True)
+        return
+
+    try:
+        create_youtube_playlist_from_spotify(
+            song_file_path=song_file,
+            playlist_name=youtube_playlist_name,
+            cookies_path=cookies_path,
+        )
+        click.echo(f"\n✓ Successfully created YouTube playlist!")
+    except Exception as e:
+        click.echo(f"\n✗ Error creating YouTube playlist: {e}", err=True)
+
+
+@cli.command()
 @click.argument("output_path", required=False)
 @click.option("--client-id", envvar="SPOTIFY_CLIENT_ID", required=True)
 @click.option("--client-secret", envvar="SPOTIFY_CLIENT_SECRET", required=True)
